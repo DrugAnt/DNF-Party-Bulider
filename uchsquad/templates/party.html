@@ -36,7 +36,6 @@
     .party-list table {
       width: 600px;
       table-layout: fixed;
-      margin-bottom: 1rem;
     }
     /* 오른쪽: 남은 캐릭터 리스트 */
     .abandon-list {
@@ -106,32 +105,54 @@
     }
   </style>
 
-  <div style="margin-bottom:1rem;">
-    <form method="get" action="" style="display:inline;">
-      <label for="role-select">유형 선택:</label>
-      <select id="role-select" name="role" onchange="this.form.submit()">
-	    <option value="all"  {% if selected=='all'  %}selected{% endif %}>All</option>
-        <option value="temple" {% if selected=='temple' %}selected{% endif %}>Temple</option>
-        <option value="azure"  {% if selected=='azure'  %}selected{% endif %}>Azure</option>
-        <option value="venus"  {% if selected=='venus'  %}selected{% endif %}>Venus</option>
-      </select>
-    </form>
-    {% if selected != 'all' %}
-    <form method="post" action="" style="display:inline; margin-left:0.5rem;" id="regen-form">
-      <input type="hidden" name="role" value="{{ selected }}">
-      <!-- 비밀번호는 JS에서 채워넣습니다 -->
-      <input type="hidden" name="regen_password" id="regen-password-field">
-      <button type="submit" id="regen-btn">파티 재생성</button>
-    </form>
-    {% endif %}
-    {% if summary %}
-      <span style="margin-left:1rem; color:#666; font-size:0.9rem;">
-        여신전 {{ summary.temple[0] }}명 ({{ summary.temple[1] }}D, {{ summary.temple[2] }}B)
-         | 애쥬어 {{ summary.azure[0] }}명 ({{ summary.azure[1] }}D, {{ summary.azure[2] }}B)
-         | 베누스 {{ summary.venus[0] }}명 ({{ summary.venus[1] }}D, {{ summary.venus[2] }}B)
-      </span>
-    {% endif %}
-  </div>
+	<div style="margin-bottom:1rem;">
+	  <form method="get" action="" style="display:inline;">
+		<label for="role-select">유형 선택:</label>
+		<select id="role-select" name="role" onchange="this.form.submit()">
+		  <option value="all"  {% if selected=='all'  %}selected{% endif %}>All</option>
+		  <option value="temple" {% if selected=='temple' %}selected{% endif %}>Temple</option>
+		  <option value="azure"  {% if selected=='azure'  %}selected{% endif %}>Azure</option>
+		  <option value="venus"  {% if selected=='venus'  %}selected{% endif %}>Venus</option>
+		</select>
+	  </form>
+
+	  {# ▶ 재생성 폼은 'all'이 아닐 때만 노출 #}
+	  {% if selected != 'all' %}
+	  <form method="post" action="" style="display:inline; margin-left:0.5rem;" id="regen-form">
+		<input type="hidden" name="role" value="{{ selected }}">
+		<input type="hidden" name="regen_password" id="regen-password-field">
+		<button type="submit" id="regen-btn" style="padding:9px 10px">파티 재생성</button>
+	  </form>
+	  {% endif %}
+
+	  {# ▶ 완료/미완료 카운트: 'all'이든 아니든 항상 렌더 #}
+	  {% if selected == 'all' and parties is mapping %}
+		{% set all_list = [] %}
+		{% for lst in parties.values() %}
+		  {% set all_list = all_list + lst %}
+		{% endfor %}
+	  {% else %}
+		{% set all_list = parties %}
+	  {% endif %}
+
+	  {% set total_parties = all_list|length %}
+	  {% set completed = all_list|selectattr('is_completed')|list|length %}
+	  {% set pending = total_parties - completed %}
+	  
+	  <div id="party-counts" style="margin-left:1rem; margin-bottom:0.25rem; color:#666; font-size:0.9rem;">
+		미완료 {{ pending }}개 · 완료 {{ completed }}개
+	  </div>
+	  
+	  {# 줄바꿈해서 아래 줄에 표시하고 싶다면 <br> 또는 block요소 사용 #}
+	  {% if summary %}
+		<div style="margin-left:1rem; color:#666; font-size:0.9rem;">
+		  여신전 {{ summary.temple[0] }}명 ({{ summary.temple[1] }}D, {{ summary.temple[2] }}B)
+		   | 애쥬어 {{ summary.azure[0] }}명 ({{ summary.azure[1] }}D, {{ summary.azure[2] }}B)
+		   | 베누스 {{ summary.venus[0] }}명 ({{ summary.venus[1] }}D, {{ summary.venus[2] }}B)
+		</div>
+	  {% endif %}
+	</div>
+
 
   {% if parties %}
     <div class="party-wrapper">
@@ -573,6 +594,8 @@ document.addEventListener('DOMContentLoaded', ()=> {
       }
       tbl.style.display = show ? '' : 'none';
     });
+	
+	updatePartyCounts();
   }
   
   // 5) 정렬 함수 정의
@@ -592,6 +615,23 @@ document.addEventListener('DOMContentLoaded', ()=> {
       return Number(a.dataset.id) - Number(b.dataset.id);
     });
     tables.forEach(tbl => container.appendChild(tbl));
+	
+	updatePartyCounts();
+  }
+  
+  // 5-1) 현재 화면에 보이는 파티 기준으로 완료/미완료 개수 갱신
+  function updatePartyCounts() {
+    const counter = document.getElementById('party-counts');
+    if (!counter) return;
+
+    // "보이는" 테이블만 집계 (filter 결과 반영)
+    const visibleTables = Array.from(document.querySelectorAll('.party-list table'))
+      .filter(t => t.style.display !== 'none');
+
+    const completedCnt = visibleTables.filter(t => t.classList.contains('completed')).length;
+    const pendingCnt   = visibleTables.length - completedCnt;
+
+    counter.textContent = `미완료 ${pendingCnt}개 · 완료 ${completedCnt}개`;
   }
   
   // 6) 체크박스/토글 변경 시 상태 저장 및 필터/정렬 적용
@@ -617,7 +657,7 @@ document.addEventListener('DOMContentLoaded', ()=> {
   // 7) 초기 필터 및 정렬 적용
   applyFilter();
   applySort();
-
+  updatePartyCounts();
 
 });
 </script>
