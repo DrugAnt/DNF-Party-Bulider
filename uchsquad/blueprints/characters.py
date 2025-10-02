@@ -1,8 +1,9 @@
 from flask import Blueprint, render_template, request, redirect, url_for, current_app
 from flask import jsonify
 import subprocess
+import sys
 import os
-from datetime import datetime 
+from datetime import datetime
 
 from db import get_db_connection
 
@@ -29,6 +30,7 @@ def show_characters():
         'temple': (0, 0, 0),
         'azure' : (0, 0, 0),
         'venus' : (0, 0, 0),
+        'tmp'   : (0, 0, 0),
     }
 
     if user_idx:
@@ -71,10 +73,10 @@ def show_characters():
         characters = [dict(r) for r in conn.execute(
             '''
             SELECT
-              idx, server, key, chara_name, job, fame, 
+              idx, server, key, chara_name, job, fame,
               score,
               NULL           AS last_score,   -- placeholder
-              isbuffer, nightmare, temple, azure, venus, use_yn,
+              isbuffer, nightmare, temple, azure, venus, tmp, use_yn,
               display_order
             FROM user_character
             WHERE adventure = ?
@@ -115,9 +117,9 @@ def show_characters():
     
     
         # 4) use_yn=1 캐릭터만 골라서 D/B 집계
-        counts = {cat: {'D': 0, 'B': 0} for cat in ('temple','azure','venus')}
+        counts = {cat: {'D': 0, 'B': 0} for cat in ('temple','azure','venus','tmp')}
         for r in conn.execute(
-            'SELECT isbuffer, temple, azure, venus '
+            'SELECT isbuffer, temple, azure, venus, tmp '
             '  FROM user_character '
             ' WHERE adventure = ? AND use_yn = 1',
             (selected_user['adventure'],)
@@ -166,9 +168,16 @@ def update_score_for_user():
 
     is_updating = True
     try:
-        # 1) 스크립트 실행
+        # 1) 스크립트 실행 (venv 보장, 타임아웃 및 출력 캡처)
         script_path = os.path.join(current_app.root_path, 'scripts', 'update_score.py')
-        subprocess.run(['python', script_path, adventure], check=True, encoding='utf-8')
+        cp = subprocess.run(
+            [sys.executable, script_path, adventure],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=90,
+        )
+        current_app.logger.info("update_score.py stdout: %s", cp.stdout[:2000])
 
         # 2) 실행 성공 시 last_execute 테이블에 기록
         conn = get_db_connection()
@@ -184,7 +193,15 @@ def update_score_for_user():
         conn.commit()
         conn.close()
 
-    except subprocess.CalledProcessError:
+    except subprocess.TimeoutExpired as e:
+        current_app.logger.error("update_score.py timeout: %ss", e.timeout)
+        return redirect(url_for('characters.show_characters',
+                                user_idx=user_idx,
+                                alert='점수 업데이트가 시간 초과되었습니다.'))
+    except subprocess.CalledProcessError as e:
+        current_app.logger.error(
+            "update_score.py failed: rc=%s stderr=%s", e.returncode, e.stderr[:2000]
+        )
         return redirect(url_for('characters.show_characters',
                                 user_idx=user_idx,
                                 alert='점수 업데이트 중 오류가 발생했습니다.'))
@@ -220,6 +237,7 @@ def update_flags():
         temple    = 1 if request.form.get(f'temple_{idx}')     else 0
         azure     = 1 if request.form.get(f'azure_{idx}')      else 0
         venus     = 1 if request.form.get(f'venus_{idx}')      else 0
+        tmp       = 1 if request.form.get(f'tmp_{idx}')        else 0
         use_yn    = 1 if request.form.get(f'use_yn_{idx}')     else 0
 
         conn.execute(
@@ -229,10 +247,11 @@ def update_flags():
                    temple    = ?,
                    azure     = ?,
                    venus     = ?,
+                   tmp       = ?,
                    use_yn    = ?
              WHERE idx = ?
             ''',
-            (nightmare, temple, azure, venus, use_yn, idx)
+            (nightmare, temple, azure, venus, tmp, use_yn, idx)
         )
 
     conn.commit()
@@ -286,25 +305,46 @@ def swap_order():
     data = request.get_json() or {}
     a_idx = data.get('a')
     b_idx = data.get('b')
-    if not (a_idx and b_idx):
-        return jsonify({'status':'error','msg':'잘못된 요청입니다.'}), 400
+
+    # 클라이언트에서 잘못된 값이 넘어오면 조기에 에러 처리
+    try:
+        a_idx = int(a_idx)
+        b_idx = int(b_idx)
+    except (TypeError, ValueError):
+        return jsonify({'status': 'error', 'msg': '잘못된 요청입니다.'}), 400
 
     conn = get_db_connection()
     # 1) 현재 순서값 읽기
-    row = conn.execute('SELECT display_order FROM user_character WHERE idx=?', (a_idx,)).fetchone()
-    row2 = conn.execute('SELECT display_order FROM user_character WHERE idx=?', (b_idx,)).fetchone()
+    row = conn.execute(
+        'SELECT display_order FROM user_character WHERE idx=?',
+        (a_idx,)
+    ).fetchone()
+    row2 = conn.execute(
+        'SELECT display_order FROM user_character WHERE idx=?',
+        (b_idx,)
+    ).fetchone()
     if not row or not row2:
         conn.close()
-        return jsonify({'status':'error','msg':'존재하지 않는 캐릭터입니다.'}), 404
+        return jsonify({'status': 'error', 'msg': '존재하지 않는 캐릭터입니다.'}), 404
 
     a_order, b_order = row['display_order'], row2['display_order']
-    # 2) 교환
-    conn.execute('UPDATE user_character SET display_order=? WHERE idx=?', (b_order, a_idx))
-    conn.execute('UPDATE user_character SET display_order=? WHERE idx=?', (a_order, b_idx))
+
+    # 2) 두 행을 하나의 쿼리로 동시에 교환하여 중간 상태에서 값이 같아지는 문제를 방지
+    conn.execute(
+        '''
+        UPDATE user_character
+           SET display_order = CASE idx
+                                  WHEN ? THEN ?
+                                  WHEN ? THEN ?
+                                END
+         WHERE idx IN (?, ?)
+        ''',
+        (a_idx, b_order, b_idx, a_order, a_idx, b_idx)
+    )
     conn.commit()
     conn.close()
 
-    return jsonify({'status':'ok'})
+    return jsonify({'status': 'ok'})
 
 
 

@@ -3,24 +3,27 @@
 <head>
   <meta charset="utf-8">
   <title>{% block title %}파티 자동매칭{% endblock %}</title>
-  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='base.css') }}">
+  {% block styles %}{% endblock %}
 </head>
 <body>
-  <header>
-    <h1>파티 자동매칭</h1>
-    <nav>
-      <a href="{{ url_for('users.list_users') }}">유저 관리</a> |
-      <a href="{{ url_for('characters.show_characters') }}">캐릭터 리스트</a> |
-      <a href="{{ url_for('party.list_and_generate') }}">파티 생성/리스트</a> |
-	  <a href="https://docs.google.com/spreadsheets/d/1BRBfMIe5knu2mUB8P8nvjTNmI5S65t5yibbQorYeyC8/edit?usp=sharing" target="_blank">경작서</a>
-    </nav>
-  </header>
+	<header>
+	  <img src="{{ url_for('static', filename='img/header_bg.webp') }}" 
+		   alt="타이틀 배경" 
+		   style="width:100%; height:auto; display:block;">
+	  <h1 style="position:absolute; top:20px; left:20px; color:white;">
+		
+	  </h1>
+	  <nav>
+		<a href="{{ url_for('users.list_users') }}">유저 관리</a> |
+		<a href="{{ url_for('characters.show_characters') }}">캐릭터 리스트</a> |
+		<a href="{{ url_for('party.list_and_generate') }}">파티 생성/리스트</a> |
+		<a href="https://docs.google.com/spreadsheets/d/1BRBfMIe5knu2mUB8P8nvjTNmI5S65t5yibbQorYeyC8/edit?usp=sharing" target="_blank">경작서</a>
+	  </nav>
+	</header>
   <main>
     {% block content %}{% endblock %}
   </main>
-</body>
-</html>
-
-	{% block scripts %}{% endblock %}
+  {% block scripts %}{% endblock %}
 </body>
 </html>
